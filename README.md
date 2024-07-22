@@ -10,6 +10,9 @@ This example outlines a Lambda function designed to locate and remove EBS snapsh
 Here's a breakdown of the process:
 
 1.The Lambda function retrieves all EBS snapshots belonging to the current account.
+
 2.It then fetches a list of active EC2 instances, encompassing both running and stopped states.
+
 3.For each snapshot, the function verifies if its corresponding volume (if present) is not attached to any active instance identified in step 2.
+
 4.If an unassociated or "stale" snapshot is found, the function proceeds to delete it, achieving storage cost optimization.
