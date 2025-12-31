@@ -1,72 +1,57 @@
-# AWS-COST-OPTIMIZATION
-#pre-requisites:
-1. Good knowledge on functioning and useflow of AWS services and what are the factors taken into consideration by the amazon for charges. 
-2. Knowledge on python programming language enough to write Lambda functions.
-3. Creation of IAM roles and policies. 
+```python
+# Snapshot cleaner (short snippet for README)
+# Paste this snippet in the README to show the implemented behavior (not full source)
 
-## Project - Identifying Unused EBS Snapshots 
-This example outlines a Lambda function designed to locate and remove EBS snapshots that are no longer connected to active EC2 instances. This approach aims to optimize storage costs by eliminating unnecessary snapshots.
+import os
+import logging
+from datetime import datetime, timezone, timedelta
+import boto3
+from botocore.config import Config
 
-Here's a breakdown of the process:
+logger = logging.getLogger()
+logger.setLevel(logging.INFO)
 
-1.The Lambda function retrieves all EBS snapshots belonging to the current account.
+DRY_RUN = os.getenv("DRY_RUN", "true").lower() == "true"
+AGE_DAYS = int(os.getenv("SNAPSHOT_AGE_DAYS", "30"))
+EXEMPT_TAGS = dict(kv.split(":", 1) for kv in os.getenv("EXEMPT_TAGS", "").split(",") if kv)
+REGION = os.getenv("AWS_REGION", "us-east-1")
 
-2.It then fetches a list of active EC2 instances, encompassing both running and stopped states.
+ec2 = boto3.client("ec2", config=Config(retries={"max_attempts": 6}), region_name=REGION)
 
-3.For each snapshot, the function verifies if its corresponding volume (if present) is not attached to any active instance identified in step 2.
+def is_exempt(snapshot):
+    tags = {t["Key"]: t["Value"] for t in snapshot.get("Tags", [])} if snapshot.get("Tags") else {}
+    return any(tags.get(k) == v for k, v in EXEMPT_TAGS.items())
 
-4.If an unassociated or "stale" snapshot is found, the function proceeds to delete it, achieving storage cost optimization.
+def snapshot_age_days(snapshot):
+    return (datetime.now(timezone.utc) - snapshot["StartTime"]).days
 
+def volume_attached(volume_id):
+    resp = ec2.describe_volumes(VolumeIds=[volume_id])
+    vols = resp.get("Volumes", [])
+    if not vols:
+        return False
+    return any(att.get("InstanceId") for att in vols[0].get("Attachments", []))
 
-AWS Lambda and EBS Snapshot Management:
-
-
-Overview of AWS Lambda:
-
-> AWS Lambda is a serverless compute service that runs code in response to events and automatically manages the underlying compute resources.
-
-> The default execution time for Lambda functions is 3 seconds, but it can be increased to 15 minutes as needed.
-
-
-Cost Considerations:
-
-> Keeping Lambda execution time short is beneficial as AWS charges based on execution time.
-
-> If resources like EBS snapshots or volumes are not deleted after use, they will incur costs.
-
-
-Permissions and Roles:
-
-> When a service like Lambda interacts with other AWS services, it does so through an IAM role.
-
-> To manage EBS snapshots, permissions such as describe snapshots and delete snapshots must be granted to the IAM role.
-
-
-Creating and Attaching Policies:
-
-> Custom policies can be created for specific actions like describing and deleting snapshots.
-
-> Policies should be attached to the role executing the Lambda function to ensure it has the necessary permissions.
-
-
-Snapshot Management Logic:
-
-> The Lambda function can be designed to delete stale snapshots—those not associated with any active volume.
-
-> A condition can be added to check if a snapshot is older than 30 days before deletion.
-
-
-Event-Driven Execution:
-
-> Lambda functions can be triggered manually or scheduled using CloudWatch Events to run at specified intervals.
-
-> Be cautious with scheduled executions to avoid unnecessary costs.
-
-
-
-Conclusion:
-
-Managing EBS snapshots through AWS Lambda is an effective way to optimize cloud costs and maintain resource efficiency. The implementation involves setting up proper permissions, writing the Lambda function logic, and ensuring it runs in an event-driven manner.
-
-
-
+def handler(event, context):
+    deleted = []
+    paginator = ec2.get_paginator("describe_snapshots")
+    for page in paginator.paginate(OwnerIds=["self"]):
+        for snap in page.get("Snapshots", []):
+            sid = snap["SnapshotId"]
+            if is_exempt(snap):
+                logger.debug("exempt %s", sid); continue
+            if snapshot_age_days(snap) < AGE_DAYS:
+                logger.debug("young %s", sid); continue
+            vol = snap.get("VolumeId")
+            if not vol:
+                logger.debug("no volume %s", sid); continue
+            if volume_attached(vol):
+                logger.debug("attached %s (vol=%s)", sid, vol); continue
+            if DRY_RUN:
+                logger.info("[DRY RUN] would delete %s", sid)
+            else:
+                logger.info("deleting %s", sid)
+                ec2.delete_snapshot(SnapshotId=sid)
+            deleted.append(sid)
+    return {"deleted_count": len(deleted), "deleted": deleted}
+```
