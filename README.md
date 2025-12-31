@@ -45,4 +45,4 @@ Observability & runbook (abridged)
 - Incident: if deletion is accidental, consult logs for snapshot IDs; recovery depends on backups/replicas—treat deletes as irreversible.
 
 Where to find implementation
-- Implementation, tests, and infra templates live in the repository (see lambda/snapshot-cleaner and infra/ folders). README omits full source intentionally—open the implementation module for exact logic and infra artifacts.
+- Implementation, tests, and infra templates live in the repository (see lambda/snapshot-cleaner and infra/ folders).
